@@ -4,7 +4,9 @@ WORKDIR /app
 
 COPY . .
 
+RUN python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.txt
+
 EXPOSE 8000
 
-# SCRUM-15 substituirá este comando pelo Gunicorn da aplicação Flask.
-CMD ["python", "-m", "http.server", "8000", "--bind", "0.0.0.0"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "main:app"]

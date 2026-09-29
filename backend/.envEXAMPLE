@@ -1,0 +1,5 @@
+DB_USER = spi
+DB_PASSWORD = spi
+DB_HOST = localhost
+DB_PORT = 5432
+DB_NAME = spi
