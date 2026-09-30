@@ -1,0 +1,1 @@
+tem que iniciar o compose, fazer um venv e executar o csv_read_tool pra popular a db, adeus.
