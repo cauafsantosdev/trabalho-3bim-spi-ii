@@ -26,6 +26,8 @@ services:
       DB_PASSWORD: spi
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
