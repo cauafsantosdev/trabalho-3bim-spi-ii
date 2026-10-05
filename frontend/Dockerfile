@@ -1,10 +1,27 @@
-FROM node:26.8-alpine
+FROM node:26.8-alpine AS dependencies
 
 WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
 
+FROM node:26.8-alpine AS builder
+
+WORKDIR /app
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
+RUN npm run build
+
+FROM node:26.8-alpine AS runner
+
+WORKDIR /app
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 EXPOSE 3000
-
-# SCRUM-19 substituirá este comando pela aplicação Next.js.
-CMD ["node", "-e", "require('http').createServer((req,res)=>{res.writeHead(200,{'Content-Type':'text/plain'});res.end('Frontend container OK\\n')}).listen(3000,'0.0.0.0')"]
+CMD ["node", "server.js"]
