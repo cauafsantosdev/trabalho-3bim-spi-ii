@@ -14,6 +14,7 @@ import {
 
 const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
 const filtrosIniciais: FiltrosServidor = { nome: "", modoNome: "similar", cargo: "", orgao: "", uf: "", limite: 100 };
+const ITENS_POR_PAGINA = 10;
 type Ordenacao = "nome-asc" | "nome-desc" | "remuneracao-desc";
 
 export function ConsultaServidores() {
@@ -24,6 +25,7 @@ export function ConsultaServidores() {
   const [erro, setErro] = useState<string | null>(null);
   const [buscaExataVazia, setBuscaExataVazia] = useState(false);
   const [ordenacao, setOrdenacao] = useState<Ordenacao>("nome-asc");
+  const [paginaAtual, setPaginaAtual] = useState(1);
   const [avisoAcao, setAvisoAcao] = useState<string | null>(null);
 
   const executarBusca = useCallback(async (valores: FiltrosServidor, signal?: AbortSignal) => {
@@ -34,16 +36,19 @@ export function ConsultaServidores() {
     try {
       const data = await consultarServidores(valores, signal);
       setResultados(data);
+      setPaginaAtual(1);
       data.forEach(salvarServidorLocal);
       setSelecionado((atual) => data.find((item) => item.id === atual?.id) ?? data[0] ?? null);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (error instanceof ApiError && error.status === 404 && valores.modoNome === "exata") {
         setResultados([]);
+        setPaginaAtual(1);
         setSelecionado(null);
         setBuscaExataVazia(true);
       } else {
         setResultados([]);
+        setPaginaAtual(1);
         setSelecionado(null);
         setErro(error instanceof Error ? error.message : "Não foi possível concluir a consulta.");
       }
@@ -64,6 +69,22 @@ export function ConsultaServidores() {
     if (ordenacao === "remuneracao-desc") return data.sort((a, b) => (b.remuneracao ?? -1) - (a.remuneracao ?? -1));
     return data.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
   }, [resultados, ordenacao]);
+
+  const totalPaginas = Math.max(1, Math.ceil(ordenados.length / ITENS_POR_PAGINA));
+  const primeiroItem = (paginaAtual - 1) * ITENS_POR_PAGINA;
+  const resultadosDaPagina = ordenados.slice(primeiroItem, primeiroItem + ITENS_POR_PAGINA);
+
+  function mudarOrdenacao(novaOrdenacao: Ordenacao) {
+    setOrdenacao(novaOrdenacao);
+    setPaginaAtual(1);
+  }
+
+  function mudarPagina(novaPagina: number) {
+    if (novaPagina < 1 || novaPagina > totalPaginas || novaPagina === paginaAtual) return;
+    setPaginaAtual(novaPagina);
+    setSelecionado(ordenados[(novaPagina - 1) * ITENS_POR_PAGINA] ?? null);
+    setAvisoAcao(null);
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -117,7 +138,7 @@ export function ConsultaServidores() {
             <span className="mono-meta">{carregando ? "Carregando registros…" : resultados.length === 100 ? "100 registros encontrados · limite da API" : `${resultados.length} ${resultados.length === 1 ? "registro encontrado" : "registros encontrados"}`}</span>
             <label className="sort-control">
               <span>Ordenar por</span>
-              <select value={ordenacao} onChange={(event) => setOrdenacao(event.target.value as Ordenacao)}>
+              <select value={ordenacao} onChange={(event) => mudarOrdenacao(event.target.value as Ordenacao)}>
                 <option value="nome-asc">Nome (A–Z)</option>
                 <option value="nome-desc">Nome (Z–A)</option>
                 <option value="remuneracao-desc">Maior remuneração</option>
@@ -134,7 +155,7 @@ export function ConsultaServidores() {
               <table>
                 <thead><tr><th>Nome</th><th>Cargo</th><th>Órgão</th><th>UF</th><th>Vínculo</th><th>Remuneração</th></tr></thead>
                 <tbody>
-                  {ordenados.map((servidor) => (
+                  {resultadosDaPagina.map((servidor) => (
                     <tr className={selecionado?.id === servidor.id ? "selected-row" : ""} key={servidor.id} onClick={() => escolher(servidor)}>
                       <td data-label="Nome"><button className="row-name" type="button" onClick={() => escolher(servidor)}>{servidor.nome}</button></td>
                       <td data-label="Cargo">{servidor.cargo || "—"}</td>
@@ -147,6 +168,20 @@ export function ConsultaServidores() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {resultados.length > 0 && (
+            <nav className="pagination" aria-label="Paginação dos resultados">
+              <button className="button button-outline" type="button" onClick={() => mudarPagina(paginaAtual - 1)} disabled={paginaAtual === 1}>
+                Anterior
+              </button>
+              <span aria-live="polite">
+                Página <strong>{paginaAtual}</strong> de {totalPaginas}
+              </span>
+              <button className="button button-outline" type="button" onClick={() => mudarPagina(paginaAtual + 1)} disabled={paginaAtual === totalPaginas}>
+                Próxima
+              </button>
+            </nav>
           )}
         </section>
 
