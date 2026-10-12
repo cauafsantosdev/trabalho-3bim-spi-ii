@@ -1,94 +1,95 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   consultarServidores,
   FiltrosServidor,
   formatarMoeda,
   formatarVinculo,
+  Ordenacao,
+  Paginacao,
   salvarServidorLocal,
   Servidor,
 } from "@/lib/servidores";
 
 const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
-const filtrosIniciais: FiltrosServidor = { nome: "", modoNome: "similar", cargo: "", orgao: "", uf: "", limite: 100 };
+const filtrosIniciais: FiltrosServidor = { nome: "", modoNome: "similar", cargo: "", orgao: "", uf: "" };
 const ITENS_POR_PAGINA = 10;
-type Ordenacao = "nome-asc" | "nome-desc" | "remuneracao-desc";
 
 export function ConsultaServidores() {
   const [filtros, setFiltros] = useState(filtrosIniciais);
+  // Filtros da última busca enviada: a navegação entre páginas usa estes, não o que está digitado no formulário.
+  const [filtrosAplicados, setFiltrosAplicados] = useState(filtrosIniciais);
   const [resultados, setResultados] = useState<Servidor[]>([]);
+  const [paginacao, setPaginacao] = useState<Paginacao | null>(null);
   const [selecionado, setSelecionado] = useState<Servidor | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [buscaExataVazia, setBuscaExataVazia] = useState(false);
   const [ordenacao, setOrdenacao] = useState<Ordenacao>("nome-asc");
-  const [paginaAtual, setPaginaAtual] = useState(1);
   const [avisoAcao, setAvisoAcao] = useState<string | null>(null);
+  const controladorRef = useRef<AbortController | null>(null);
 
-  const executarBusca = useCallback(async (valores: FiltrosServidor, signal?: AbortSignal) => {
+  const executarBusca = useCallback(async (valores: FiltrosServidor, pagina: number, ordem: Ordenacao): Promise<void> => {
+    controladorRef.current?.abort();
+    const controller = new AbortController();
+    controladorRef.current = controller;
+
     setCarregando(true);
     setErro(null);
     setBuscaExataVazia(false);
     setAvisoAcao(null);
     try {
-      const data = await consultarServidores(valores, signal);
-      setResultados(data);
-      setPaginaAtual(1);
-      data.forEach(salvarServidorLocal);
-      setSelecionado((atual) => data.find((item) => item.id === atual?.id) ?? data[0] ?? null);
+      const data = await consultarServidores(valores, { pagina, limite: ITENS_POR_PAGINA, ordenacao: ordem }, controller.signal);
+      setResultados(data.itens);
+      setPaginacao(data.paginacao);
+      setFiltrosAplicados(valores);
+      data.itens.forEach(salvarServidorLocal);
+      setSelecionado((atual) => data.itens.find((item) => item.id === atual?.id) ?? data.itens[0] ?? null);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
-      if (error instanceof ApiError && error.status === 404 && valores.modoNome === "exata") {
-        setResultados([]);
-        setPaginaAtual(1);
-        setSelecionado(null);
+      // Os dados mudaram e a página pedida deixou de existir: volta para a primeira.
+      if (error instanceof ApiError && error.codigo === "PAGINA_INEXISTENTE" && pagina > 1) {
+        void executarBusca(valores, 1, ordem);
+        return;
+      }
+      setResultados([]);
+      setPaginacao(null);
+      setSelecionado(null);
+      if (error instanceof ApiError && error.codigo === "NOME_NAO_ENCONTRADO") {
         setBuscaExataVazia(true);
       } else {
-        setResultados([]);
-        setPaginaAtual(1);
-        setSelecionado(null);
         setErro(error instanceof Error ? error.message : "Não foi possível concluir a consulta.");
       }
     } finally {
-      if (!signal?.aborted) setCarregando(false);
+      if (!controller.signal.aborted) setCarregando(false);
     }
   }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void executarBusca(filtrosIniciais, controller.signal);
-    return () => controller.abort();
+    void executarBusca(filtrosIniciais, 1, "nome-asc");
+    return () => controladorRef.current?.abort();
   }, [executarBusca]);
 
-  const ordenados = useMemo(() => {
-    const data = [...resultados];
-    if (ordenacao === "nome-desc") return data.sort((a, b) => b.nome.localeCompare(a.nome, "pt-BR"));
-    if (ordenacao === "remuneracao-desc") return data.sort((a, b) => (b.remuneracao ?? -1) - (a.remuneracao ?? -1));
-    return data.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-  }, [resultados, ordenacao]);
-
-  const totalPaginas = Math.max(1, Math.ceil(ordenados.length / ITENS_POR_PAGINA));
-  const primeiroItem = (paginaAtual - 1) * ITENS_POR_PAGINA;
-  const resultadosDaPagina = ordenados.slice(primeiroItem, primeiroItem + ITENS_POR_PAGINA);
+  const paginaAtual = paginacao?.pagina ?? 1;
+  const totalPaginas = Math.max(1, paginacao?.total_paginas ?? 1);
+  const totalRegistros = paginacao?.total ?? 0;
 
   function mudarOrdenacao(novaOrdenacao: Ordenacao) {
     setOrdenacao(novaOrdenacao);
-    setPaginaAtual(1);
+    void executarBusca(filtrosAplicados, 1, novaOrdenacao);
   }
 
   function mudarPagina(novaPagina: number) {
-    if (novaPagina < 1 || novaPagina > totalPaginas || novaPagina === paginaAtual) return;
-    setPaginaAtual(novaPagina);
-    setSelecionado(ordenados[(novaPagina - 1) * ITENS_POR_PAGINA] ?? null);
-    setAvisoAcao(null);
+    if (carregando || novaPagina < 1 || novaPagina > totalPaginas || novaPagina === paginaAtual) return;
+    void executarBusca(filtrosAplicados, novaPagina, ordenacao);
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void executarBusca(filtros);
+    void executarBusca(filtros, 1, ordenacao);
   }
 
   function escolher(servidor: Servidor) {
@@ -135,7 +136,7 @@ export function ConsultaServidores() {
       <div className="query-layout">
         <section className="results" aria-live="polite">
           <div className="results-toolbar">
-            <span className="mono-meta">{carregando ? "Carregando registros…" : resultados.length === 100 ? "100 registros encontrados · limite da API" : `${resultados.length} ${resultados.length === 1 ? "registro encontrado" : "registros encontrados"}`}</span>
+            <span className="mono-meta">{carregando ? "Carregando registros…" : `${totalRegistros.toLocaleString("pt-BR")} ${totalRegistros === 1 ? "registro encontrado" : "registros encontrados"}`}</span>
             <label className="sort-control">
               <span>Ordenar por</span>
               <select value={ordenacao} onChange={(event) => mudarOrdenacao(event.target.value as Ordenacao)}>
@@ -155,7 +156,7 @@ export function ConsultaServidores() {
               <table>
                 <thead><tr><th>Nome</th><th>Cargo</th><th>Órgão</th><th>UF</th><th>Vínculo</th><th>Remuneração</th></tr></thead>
                 <tbody>
-                  {resultadosDaPagina.map((servidor) => (
+                  {resultados.map((servidor) => (
                     <tr className={selecionado?.id === servidor.id ? "selected-row" : ""} key={servidor.id} onClick={() => escolher(servidor)}>
                       <td data-label="Nome"><button className="row-name" type="button" onClick={() => escolher(servidor)}>{servidor.nome}</button></td>
                       <td data-label="Cargo">{servidor.cargo || "—"}</td>
@@ -172,13 +173,13 @@ export function ConsultaServidores() {
 
           {resultados.length > 0 && (
             <nav className="pagination" aria-label="Paginação dos resultados">
-              <button className="button button-outline" type="button" onClick={() => mudarPagina(paginaAtual - 1)} disabled={paginaAtual === 1}>
+              <button className="button button-outline" type="button" onClick={() => mudarPagina(paginaAtual - 1)} disabled={carregando || !paginacao?.tem_anterior}>
                 Anterior
               </button>
               <span aria-live="polite">
-                Página <strong>{paginaAtual}</strong> de {totalPaginas}
+                Página <strong>{paginaAtual.toLocaleString("pt-BR")}</strong> de {totalPaginas.toLocaleString("pt-BR")}
               </span>
-              <button className="button button-outline" type="button" onClick={() => mudarPagina(paginaAtual + 1)} disabled={paginaAtual === totalPaginas}>
+              <button className="button button-outline" type="button" onClick={() => mudarPagina(paginaAtual + 1)} disabled={carregando || !paginacao?.tem_proxima}>
                 Próxima
               </button>
             </nav>
