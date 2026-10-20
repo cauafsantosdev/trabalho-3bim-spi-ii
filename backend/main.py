@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 
 import psycopg
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 from psycopg import errors as pg_errors
 from psycopg.rows import dict_row
 from werkzeug.exceptions import HTTPException
@@ -50,6 +50,11 @@ QUERY_TIMEOUT_MS = _env_int("QUERY_TIMEOUT_MS", 5000)
 # Limite de requisições por IP dentro de uma janela de tempo (segundos)
 RATE_LIMIT_REQUESTS = _env_int("RATE_LIMIT_REQUESTS", 120)
 RATE_LIMIT_WINDOW = _env_int("RATE_LIMIT_WINDOW", 60)
+
+# Proteção contra sobrecarga: limite de concorrência ativa simultânea e timeout de fila
+MAX_CONCURRENT_REQUESTS = _env_int("MAX_CONCURRENT_REQUESTS", 20)
+CONCURRENCY_TIMEOUT_MS = _env_int("CONCURRENCY_TIMEOUT_MS", 250)
+CONCURRENCY_TIMEOUT_SECS = CONCURRENCY_TIMEOUT_MS / 1000.0
 
 # Parâmetros de busca aceitos por /api/servidores
 PARAMETROS_PERMITIDOS = {
@@ -185,10 +190,60 @@ class RateLimiter:
 rate_limiter = RateLimiter(RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW)
 
 
+# ---------------------------------------------------------------------------
+# Proteção contra sobrecarga: semáforo de concorrência com timeout
+# ---------------------------------------------------------------------------
+
+class ConcurrencyLimiter:
+    """Controla o número máximo de requisições processadas simultaneamente.
+
+    Protege a aplicação e o banco contra saturação de conexões, CPU e memória
+    quando múltiplas requisições paralelas chegam ao mesmo tempo.
+    """
+
+    def __init__(self, max_concorrentes: int):
+        self.max_concorrentes = max(1, max_concorrentes)
+        self._semaforo = threading.BoundedSemaphore(self.max_concorrentes)
+        self._ativas = 0
+        self._lock = threading.Lock()
+
+    def adquirir(self, timeout: float = 0.0) -> bool:
+        """Tenta adquirir um slot de execução. Retorna True se obteve vaga dentro do timeout."""
+        if timeout <= 0:
+            adquiriu = self._semaforo.acquire(blocking=False)
+        else:
+            adquiriu = self._semaforo.acquire(blocking=True, timeout=timeout)
+        if adquiriu:
+            with self._lock:
+                self._ativas += 1
+        return adquiriu
+
+    def liberar(self) -> None:
+        """Libera o slot previamente adquirido."""
+        with self._lock:
+            if self._ativas > 0:
+                self._ativas -= 1
+                try:
+                    self._semaforo.release()
+                except ValueError:
+                    pass
+
+    @property
+    def ativas(self) -> int:
+        with self._lock:
+            return self._ativas
+
+
+concurrency_limiter = ConcurrencyLimiter(MAX_CONCURRENT_REQUESTS)
+
+
 @app.before_request
-def aplicar_rate_limit():
-    if request.method == "OPTIONS" or request.path == "/health":
+def aplicar_controles_requisicao():
+    # Rotas de checagem de saúde e CORS preflight não devem sofrer bloqueio
+    if request.method == "OPTIONS" or request.path in ("/health", "/"):
         return None
+
+    # 1. Limite de taxa de requisições por IP (Rate Limiting)
     permitido, espera = rate_limiter.verificar(request.remote_addr or "desconhecido")
     if not permitido:
         raise ApiError(
@@ -196,7 +251,24 @@ def aplicar_rate_limit():
             f"Limite de requisições excedido. Tente novamente em {espera} segundo(s).",
             headers={"Retry-After": str(espera)},
         )
+
+    # 2. Proteção contra sobrecarga: limite de concorrência ativa simultânea
+    adquiriu = concurrency_limiter.adquirir(timeout=CONCURRENCY_TIMEOUT_SECS)
+    if not adquiriu:
+        raise ApiError(
+            503, "SOBRECARGA_TEMPORARIA",
+            "O servidor está temporariamente sobrecarregado. Tente novamente em instantes.",
+            headers={"Retry-After": "1"},
+        )
+    g.concorrencia_adquirida = True
     return None
+
+
+@app.teardown_request
+def liberar_recursos_requisicao(exc=None):
+    if getattr(g, "concorrencia_adquirida", False):
+        concurrency_limiter.liberar()
+        g.concorrencia_adquirida = False
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +418,14 @@ def health():
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()
-        return jsonify({"status": "healthy", "database": "connected"}), 200
+        return jsonify({
+            "status": "healthy",
+            "database": "connected",
+            "concorrencia": {
+                "ativas": concurrency_limiter.ativas,
+                "limite": concurrency_limiter.max_concorrentes,
+            },
+        }), 200
     except Exception as exc:
         app.logger.error("Health check falhou: %s", exc)
         return jsonify({
@@ -474,4 +553,4 @@ def listar_servidores():
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, threaded=True)

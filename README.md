@@ -54,6 +54,20 @@ Erros são sempre JSON no formato `{ "erro": "...", "codigo": "...", "status": 4
 | 404 | `NOME_NAO_ENCONTRADO`, `PAGINA_INEXISTENTE`, `ROTA_NAO_ENCONTRADA` |
 | 405 | `METODO_NAO_PERMITIDO` |
 | 429 | `LIMITE_REQUISICOES_EXCEDIDO` (cabeçalho `Retry-After`) |
-| 500 / 503 / 504 | `ERRO_INTERNO`, `BANCO_INDISPONIVEL`, `CONSULTA_EXCEDEU_TEMPO` |
+| 500 / 503 / 504 | `ERRO_INTERNO`, `BANCO_INDISPONIVEL`, `SOBRECARGA_TEMPORARIA`, `CONSULTA_EXCEDEU_TEMPO` |
 
-Configuração opcional (variáveis de ambiente do backend): `QUERY_TIMEOUT_MS` (padrão 5000), `RATE_LIMIT_REQUESTS` (padrão 120) e `RATE_LIMIT_WINDOW` em segundos (padrão 60).
+Configuração opcional (variáveis de ambiente do backend): `QUERY_TIMEOUT_MS` (padrão 5000), `RATE_LIMIT_REQUESTS` (padrão 120), `RATE_LIMIT_WINDOW` (padrão 60), `MAX_CONCURRENT_REQUESTS` (padrão 20), `CONCURRENCY_TIMEOUT_MS` (padrão 250), `GUNICORN_WORKERS` (padrão 4) e `GUNICORN_THREADS` (padrão 8).
+
+## Concorrência e proteção contra sobrecarga
+
+Para evitar que requisições simultâneas travem a API ou derrubem o banco de dados:
+
+- **Gunicorn com threads**: configurado em `backend/gunicorn.conf.py` no modo `gthread` (4 workers e 8 threads por padrão), permitindo processar várias requisições em paralelo.
+- **Semáforo de sobrecarga**: limitamos a concorrência ativa no backend (`MAX_CONCURRENT_REQUESTS=20`) com tempo de espera (`CONCURRENCY_TIMEOUT_MS=250`). Se a API receber uma enxurrada de chamadas e a fila não esvaziar a tempo, ela responde HTTP 503 com o código `SOBRECARGA_TEMPORARIA` e cabeçalho `Retry-After: 1`, protegendo o Postgres e a memória da aplicação.
+- **Health check isolado**: as rotas `/health` e `/` não passam por esse semáforo, então o monitoramento continua respondendo rápido mesmo quando a API estiver sob estresse.
+
+Para testar com os containers ligados:
+
+```bash
+python backend/teste_paralelo.py
+```
