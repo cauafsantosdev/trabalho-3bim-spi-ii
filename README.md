@@ -1,73 +1,133 @@
 # Trabalho 3º Bimestre — SPI II
 
-Aplicação full stack desenvolvida para o trabalho do 3º bimestre da disciplina de SPI II.
+Aplicação web para consulta de dados de servidores do Poder Executivo Federal, desenvolvida na disciplina de Sistemas para Internet II (FURG). O sistema permite pesquisar por nome, cargo/profissão, UF e órgão, combinar filtros e consultar nomes por similaridade.
 
-## Estrutura
+## Tecnologias e estrutura
+
+- **Backend:** Python, Flask e Gunicorn.
+- **Frontend:** Next.js (React).
+- **Banco de dados:** PostgreSQL, com índices B-tree e GIN/`pg_trgm`.
+- **Execução:** Docker Compose, com três serviços (`db`, `backend` e `frontend`).
 
 ```text
 .
-├── backend/
-├── frontend/
-├── db/
-└── docker-compose.yml
+├── backend/              # API, Gunicorn e teste de requisições paralelas
+├── frontend/             # Aplicação Next.js
+├── db/                   # Arquivos de dados, esquema SQL e script de importação
+├── docker-compose.yml
+└── README.md
 ```
 
-A aplicação será composta por:
+## Execução local
 
-- backend em Python, Flask e Gunicorn;
-- frontend web;
-- banco de dados PostgreSQL;
-- execução dos serviços com Docker Compose.
+**Pré-requisitos:** Docker com Compose e Python 3 com `venv` e `pip` para executar o importador. A porta 5432 deve estar disponível no host, assim como as portas 8000 e 3000.
 
-## Status
+Na raiz do repositório, construa e inicie os serviços:
 
-Estrutura inicial do projeto criada. A configuração dos serviços e a implementação da aplicação serão adicionadas nas próximas tarefas.
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Os serviços ficam acessíveis em:
+
+| Serviço             | Endereço                                            |
+| -------------------- | ---------------------------------------------------- |
+| Frontend             | http://localhost:3000                                |
+| API                  | http://localhost:8000/api/servidores                 |
+| Verificação da API | http://localhost:8000/health                         |
+| PostgreSQL           | `localhost:5432` (banco `spi`, usuário `spi`) |
+
+**Importante:** o Compose inicializa o PostgreSQL, mas **não executa automaticamente a importação dos dados**. Para realizar consultas sobre registros, conclua a preparação descrita abaixo. O endpoint `/health` verifica a conexão com o banco, não se a tabela já foi populada.
+
+### Preparação e importação dos dados
+
+Os arquivos utilizados pelo importador são `db/CARREIRA-012017.TXT` e `db/APOSENTADOS.112016.csv`, associados aos conjuntos oficiais do Portal Brasileiro de Dados Abertos:
+
+- [Gestão de Pessoas do Executivo Federal — Aposentados](https://dados.gov.br/dados/conjuntos-dados/gestao-de-pessoas-executivo-federal--aposentados)
+- [Gestão de Pessoas do Executivo Federal — Carreiras/Cargos](https://dados.gov.br/dados/conjuntos-dados/gestao-de-pessoas-executivo-federal---carreiras--cargos)
+
+Com os contêineres em execução, na raiz do projeto:
+
+```bash
+python3 -m venv db/.venv
+db/.venv/bin/python -m pip install -r db/requirements.txt
+(cd db && .venv/bin/python csv_read_tool.py)
+```
+
+O script `db/csv_read_tool.py` cria a tabela e índices necessários e carrega os dois arquivos no PostgreSQL. Ele se conecta a `localhost:5432` utilizando as credenciais de desenvolvimento definidas no Compose. **Não execute a importação repetidamente sobre o mesmo banco**, pois o script não elimina registros previamente carregados.
+
+Após a importação, acesse `http://localhost:3000` ou faça uma consulta simples:
+
+```bash
+curl 'http://localhost:8000/api/servidores?limite=2'
+```
+
+Para acompanhar a execução ou interromper os serviços:
+
+```bash
+docker compose logs -f
+docker compose down
+```
+
+O volume `postgres_data` mantém os registros após `docker compose down`.
 
 ## API de servidores
 
-`GET /api/servidores`
+**Endpoint principal:** `GET /api/servidores`
 
-| Parâmetro | Descrição |
-|---|---|
-| `nome` | Busca exata pelo nome completo |
-| `similar` | Busca aproximada pelo nome (pg_trgm / ILIKE) |
-| `cargo`, `orgao` | Filtros parciais por cargo/profissão e órgão/instituição |
-| `uf` | Sigla de um estado brasileiro (ex.: `SP`) |
-| `pagina` (`page`) | Página desejada, a partir de 1 (padrão `1`) |
-| `limite` (`limit`) | Registros por página (padrão `20`, máximo `100`) |
-| `ordenar` | `nome-asc` (padrão; com `similar`, relevância), `nome-desc` ou `remuneracao-desc` |
+| Parâmetro              | Comportamento                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `nome`                | Correspondência exata, desconsiderando diferenças de maiúsculas e minúsculas |
+| `similar`             | Similaridade por `pg_trgm` ou correspondência parcial com `ILIKE`           |
+| `cargo`               | Correspondência parcial do cargo/profissão                                     |
+| `orgao`               | Correspondência parcial do órgão/instituição                                |
+| `uf`                  | Sigla de UF, como `RS` ou `DF`                                               |
+| `pagina` ou `page`  | Número da página, iniciado em 1 (padrão: 1)                                   |
+| `limite` ou `limit` | Quantidade por página (padrão: 20; máximo: 100)                               |
+| `ordenar`             | `nome-asc`, `nome-desc` ou `remuneracao-desc`                              |
 
-Resposta de sucesso:
+Os filtros podem ser combinados. Na ausência de ordenação explícita, buscas com `similar` são ordenadas por relevância; as demais utilizam `nome-asc`.
 
-```json
-{
-  "itens": [{ "id": 1, "cpf": "***796204**", "nome": "...", "cargo": "...", "orgao": "...", "uf": "DF", "tipo_vinculo": "ATIVO", "remuneracao": 9996.79 }],
-  "paginacao": { "pagina": 1, "limite": 20, "total": 277029, "total_paginas": 13852, "tem_anterior": false, "tem_proxima": true }
-}
+Exemplos:
+
+```http
+GET /api/servidores?nome=Maria%20Silva
+GET /api/servidores?cargo=analista&uf=RS
+GET /api/servidores?orgao=universidade&pagina=2&limite=20
+GET /api/servidores?similar=maria&limite=20
 ```
 
-Erros são sempre JSON no formato `{ "erro": "...", "codigo": "...", "status": 400, "campo": "..." }`:
+O retorno de sucesso é um JSON com os campos `itens` (lista de servidores) e `paginacao` (`pagina`, `limite`, `total`, `total_paginas`, `tem_anterior` e `tem_proxima`). Cada item inclui `id`, `cpf`, `nome`, `cargo`, `orgao`, `uf`, `tipo_vinculo` e `remuneracao`, conforme os valores armazenados. Os exemplos acima usam parâmetros ilustrativos, não registros reais.
 
-| HTTP | Códigos |
-|---|---|
-| 400 | `NOME_INVALIDO`, `CARGO_INVALIDO`, `ORGAO_INVALIDO`, `UF_INVALIDA`, `SQL_NAO_PERMITIDO`, `PARAMETRO_BUSCA_INVALIDO`, `PARAMETRO_DUPLICADO` |
-| 404 | `NOME_NAO_ENCONTRADO`, `PAGINA_INEXISTENTE`, `ROTA_NAO_ENCONTRADA` |
-| 405 | `METODO_NAO_PERMITIDO` |
-| 429 | `LIMITE_REQUISICOES_EXCEDIDO` (cabeçalho `Retry-After`) |
-| 500 / 503 / 504 | `ERRO_INTERNO`, `BANCO_INDISPONIVEL`, `SOBRECARGA_TEMPORARIA`, `CONSULTA_EXCEDEU_TEMPO` |
+A API valida os parâmetros e utiliza consultas SQL parametrizadas. As respostas de erro também são JSON, com `erro`, `codigo`, `status` e, quando aplicável, `campo`.
 
-Configuração opcional (variáveis de ambiente do backend): `QUERY_TIMEOUT_MS` (padrão 5000), `RATE_LIMIT_REQUESTS` (padrão 120), `RATE_LIMIT_WINDOW` (padrão 60), `MAX_CONCURRENT_REQUESTS` (padrão 20), `CONCURRENCY_TIMEOUT_MS` (padrão 250), `GUNICORN_WORKERS` (padrão 4) e `GUNICORN_THREADS` (padrão 8).
+| HTTP | Situação                                                     |
+| ---- | -------------------------------------------------------------- |
+| 400  | Parâmetros inválidos, duplicados ou entradas não permitidas |
+| 404  | Nome não encontrado, página ou rota inexistente              |
+| 405  | Método HTTP não permitido                                    |
+| 429  | Limite de requisições excedido (`Retry-After`)             |
+| 500  | Erro interno ou falha de consulta não classificada            |
+| 503  | Banco indisponível ou sobrecarga temporária                  |
+| 504  | Consulta ao banco excedeu o tempo limite                       |
 
-## Concorrência e proteção contra sobrecarga
+## Concorrência e teste de sobrecarga
 
-Para evitar que requisições simultâneas travem a API ou derrubem o banco de dados:
+O Gunicorn utiliza o modelo `gthread`. A API implementa limite de requisições por IP, controle de concorrência por semáforo e timeout de consultas ao PostgreSQL. Os endpoints `/` e `/health` não passam pelos limitadores de requisições. Os limites de taxa e concorrência são mantidos **na memória de cada processo do Gunicorn**, não são globais entre os workers.
 
-- **Gunicorn com threads**: configurado em `backend/gunicorn.conf.py` no modo `gthread` (4 workers e 8 threads por padrão), permitindo processar várias requisições em paralelo.
-- **Semáforo de sobrecarga**: limitamos a concorrência ativa no backend (`MAX_CONCURRENT_REQUESTS=20`) com tempo de espera (`CONCURRENCY_TIMEOUT_MS=250`). Se a API receber uma enxurrada de chamadas e a fila não esvaziar a tempo, ela responde HTTP 503 com o código `SOBRECARGA_TEMPORARIA` e cabeçalho `Retry-After: 1`, protegendo o Postgres e a memória da aplicação.
-- **Health check isolado**: as rotas `/health` e `/` não passam por esse semáforo, então o monitoramento continua respondendo rápido mesmo quando a API estiver sob estresse.
+| Variável                   |         Padrão |
+| --------------------------- | --------------: |
+| `GUNICORN_WORKERS`        |           `4` |
+| `GUNICORN_THREADS`        |           `8` |
+| `QUERY_TIMEOUT_MS`        |        `5000` |
+| `RATE_LIMIT_REQUESTS`     |         `120` |
+| `RATE_LIMIT_WINDOW`       | `60` segundos |
+| `MAX_CONCURRENT_REQUESTS` |          `20` |
+| `CONCURRENCY_TIMEOUT_MS`  |         `250` |
 
-Para testar com os containers ligados:
+Para executar o procedimento de teste previsto no código, com os serviços iniciados e o banco populado:
 
 ```bash
-python backend/teste_paralelo.py
+python3 backend/teste_paralelo.py
 ```
