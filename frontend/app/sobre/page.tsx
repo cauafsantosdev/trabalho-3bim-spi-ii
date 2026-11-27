@@ -7,9 +7,9 @@ export default function SobrePage() {
         <p className="page-lead">Entenda o que está disponível nesta aplicação.</p>
       </header>
       <div className="prose">
-        <section><h2>Registros</h2><p>A base reúne servidores ativos e aposentados. Cada resposta pode conter identificador, CPF, nome, cargo, órgão, UF, tipo de vínculo e remuneração. Alguns campos podem não estar informados na fonte.</p></section>
-        <section><h2>Como pesquisar</h2><p>A busca exata exige o nome completo. A busca aproximada aceita trechos e similaridade. Cargo e órgão também aceitam correspondência parcial; UF é um filtro exato.</p></section>
-        <section><h2>Limites atuais</h2><p>A API retorna no máximo 100 registros por consulta e, neste momento, não oferece criação, edição, exclusão nem consulta individual por ID.</p></section>
+        <section><h2>Registros</h2><p>A consulta reúne as bases de carreiras de agosto de 2026 e de aposentados de agosto de 2025. Abra um registro para ver os campos da fonte, como código da carreira, matrícula ou portaria de aposentadoria.</p></section>
+        <section><h2>Como pesquisar</h2><p>A busca exata usa o nome completo do servidor. A aproximada aceita trechos do nome. Você também pode pesquisar o órgão pelo nome ou pela sigla, como FURG. O filtro de UF usa o estado da unidade pagadora, informado na base de carreiras.</p></section>
+        <section><h2>Limites atuais</h2><p>A API oferece consultas de leitura, com até 100 registros por página.</p></section>
       </div>
     </article>
   );

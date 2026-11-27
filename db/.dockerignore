@@ -1,0 +1,6 @@
+*
+!requirements.txt
+!csv_read_tool.py
+!db.sql
+!indices.sql
+!*.csv.gz

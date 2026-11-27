@@ -10,6 +10,7 @@ import psycopg
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request
 from psycopg import errors as pg_errors
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 from werkzeug.exceptions import HTTPException
 
@@ -34,9 +35,7 @@ db_host = os.getenv("DB_HOST", "localhost")
 db_port = os.getenv("DB_PORT", "5432")
 db_name = os.getenv("DB_NAME", "spi")
 
-db_string = (
-    f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-)
+db_string = make_conninfo(user=db_user, password=db_password, host=db_host, port=db_port, dbname=db_name)
 
 app.config["DB_URL"] = db_string
 
@@ -308,6 +307,7 @@ def format_servidor(row: dict) -> dict:
         "nome": row["nome"],
         "cargo": row["cargo"],
         "orgao": row["orgao"],
+        "sigla_orgao": row["sigla_orgao"],
         "uf": row["uf"],
         "tipo_vinculo": row["tipo_vinculo"],
         "remuneracao": float(row["remuneracao"]) if row["remuneracao"] is not None else None,
@@ -488,12 +488,25 @@ def listar_servidores():
         params["cargo"] = f"%{cargo}%"
 
     if uf:
-        conditions.append("UPPER(uf) = %(uf)s")
+        conditions.append("uf = %(uf)s")
         params["uf"] = uf
 
     if orgao:
-        conditions.append("orgao ILIKE %(orgao)s")
-        params["orgao"] = f"%{orgao}%"
+        conditions.append("""
+            orgao IN (
+                SELECT o.nome FROM orgaos o
+                WHERE unaccent(o.nome) ILIKE unaccent(%(orgao_nome)s)
+                   OR EXISTS (
+                       SELECT FROM unnest(o.siglas) AS s(sigla)
+                       WHERE upper(s.sigla) = upper(%(sigla)s)
+                          OR upper(split_part(s.sigla, '/', 1)) = upper(%(sigla)s)
+                   )
+                UNION ALL
+                SELECT u.orgao FROM siglas_universidades u WHERE u.sigla = upper(%(sigla)s)
+            )
+        """)
+        params["orgao_nome"] = f"%{orgao}%"
+        params["sigla"] = orgao
 
     # Montagem da cláusula WHERE caso haja filtros
     where_clause = ""
@@ -502,7 +515,7 @@ def listar_servidores():
 
     count_query = f"SELECT COUNT(*) AS total FROM servidores {where_clause}"
     query = f"""
-        SELECT id, cpf, nome, cargo, orgao, uf, tipo_vinculo, remuneracao
+        SELECT id, cpf, nome, cargo, orgao, sigla_orgao, uf, tipo_vinculo, remuneracao
         FROM servidores
         {where_clause}
         {order_by}
@@ -549,6 +562,20 @@ def listar_servidores():
             "tem_proxima": pagina < total_paginas,
         },
     }), 200
+
+
+@app.get("/servidores/<int:servidor_id>")
+@app.get("/api/servidores/<int:servidor_id>")
+def detalhar_servidor(servidor_id: int):
+    try:
+        with get_db_connection() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM servidores WHERE id = %s", (servidor_id,))
+            row = cur.fetchone()
+    except psycopg.Error as exc:
+        raise traduzir_erro_banco(exc) from exc
+    if row is None:
+        raise ApiError(404, "REGISTRO_NAO_ENCONTRADO", "Registro não encontrado.")
+    return jsonify({**format_servidor(row), "detalhes": row["detalhes"]})
 
 
 if __name__ == "__main__":

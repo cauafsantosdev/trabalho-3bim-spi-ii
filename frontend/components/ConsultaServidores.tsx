@@ -46,7 +46,6 @@ export function ConsultaServidores() {
       setResultados(data.itens);
       setPaginacao(data.paginacao);
       setFiltrosAplicados(valores);
-      data.itens.forEach(salvarServidorLocal);
       setSelecionado((atual) => data.itens.find((item) => item.id === atual?.id) ?? data.itens[0] ?? null);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
@@ -120,8 +119,8 @@ export function ConsultaServidores() {
           <input id="cargo" value={filtros.cargo} onChange={(event) => setFiltros({ ...filtros, cargo: event.target.value })} placeholder="Todos" />
         </div>
         <div className="field">
-          <label htmlFor="orgao">Órgão</label>
-          <input id="orgao" value={filtros.orgao} onChange={(event) => setFiltros({ ...filtros, orgao: event.target.value })} placeholder="Todos" />
+          <label htmlFor="orgao">Órgão ou sigla</label>
+          <input id="orgao" value={filtros.orgao} onChange={(event) => setFiltros({ ...filtros, orgao: event.target.value })} placeholder="Nome ou sigla, como FURG" />
         </div>
         <div className="field field-uf">
           <label htmlFor="uf">UF</label>
@@ -158,9 +157,9 @@ export function ConsultaServidores() {
                 <tbody>
                   {resultados.map((servidor) => (
                     <tr className={selecionado?.id === servidor.id ? "selected-row" : ""} key={servidor.id} onClick={() => escolher(servidor)}>
-                      <td data-label="Nome"><button className="row-name" type="button" onClick={() => escolher(servidor)}>{servidor.nome}</button></td>
+                      <td data-label="Nome"><button className="row-name" type="button" onClick={() => escolher(servidor)}>{servidor.nome || "Nome não informado"}</button></td>
                       <td data-label="Cargo">{servidor.cargo || "—"}</td>
-                      <td data-label="Órgão">{servidor.orgao || "—"}</td>
+                      <td data-label="Órgão">{servidor.orgao || "—"}{servidor.sigla_orgao && ` (${servidor.sigla_orgao})`}</td>
                       <td data-label="UF">{servidor.uf || "—"}</td>
                       <td data-label="Vínculo">{formatarVinculo(servidor.tipo_vinculo)}</td>
                       <td data-label="Remuneração">{formatarMoeda(servidor.remuneracao)}</td>
@@ -190,18 +189,19 @@ export function ConsultaServidores() {
           {selecionado ? (
             <>
               <p className="mono-meta">Registro #{selecionado.id}</p>
-              <h2>{selecionado.nome}</h2>
+              <h2>{selecionado.nome || "Nome não informado"}</h2>
               <dl>
                 <div><dt>CPF</dt><dd>{selecionado.cpf}</dd></div>
                 <div><dt>Cargo</dt><dd>{selecionado.cargo || "Não informado"}</dd></div>
                 <div><dt>Órgão</dt><dd>{selecionado.orgao || "Não informado"}</dd></div>
+                <div><dt>Sigla do órgão</dt><dd>{selecionado.sigla_orgao || "Não informada"}</dd></div>
                 <div><dt>UF</dt><dd>{selecionado.uf || "Não informada"}</dd></div>
                 <div><dt>Vínculo</dt><dd>{formatarVinculo(selecionado.tipo_vinculo)}</dd></div>
                 <div><dt>Remuneração</dt><dd>{formatarMoeda(selecionado.remuneracao)}</dd></div>
               </dl>
               {avisoAcao && <p className="inline-notice">{avisoAcao}</p>}
               <div className="detail-actions">
-                <Link className="button button-outline" href={`/servidores/${selecionado.id}`} onClick={() => salvarServidorLocal(selecionado)}>Ver detalhes</Link>
+                <Link className="button button-outline" href={`/servidores/${selecionado.id}`}>Ver detalhes</Link>
                 <Link className="button button-outline" href={`/servidores/${selecionado.id}/editar`} onClick={() => salvarServidorLocal(selecionado)}>Editar</Link>
                 <button className="button button-danger" type="button" onClick={() => setAvisoAcao("Exclusão indisponível: o backend atual não possui uma rota DELETE.")}>Excluir</button>
               </div>

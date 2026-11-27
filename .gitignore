@@ -28,3 +28,7 @@ next-env.d.ts
 
 # Logs
 *.log
+
+# Os arquivos integrais são versionados em gzip para o deploy.
+/db/CARREIRA_082026.csv
+/db/APOSENTADOS_082025_FULL.csv
