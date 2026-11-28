@@ -35,7 +35,13 @@ db_host = os.getenv("DB_HOST", "localhost")
 db_port = os.getenv("DB_PORT", "5432")
 db_name = os.getenv("DB_NAME", "spi")
 
-db_string = make_conninfo(user=db_user, password=db_password, host=db_host, port=db_port, dbname=db_name)
+db_string = os.getenv("DATABASE_URL") or make_conninfo(
+    user=db_user,
+    password=db_password,
+    host=db_host,
+    port=db_port,
+    dbname=db_name,
+)
 
 app.config["DB_URL"] = db_string
 

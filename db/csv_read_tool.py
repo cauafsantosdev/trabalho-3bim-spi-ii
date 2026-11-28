@@ -133,6 +133,7 @@ def importar(cur, fonte, caminho, assinatura):
 
 def main():
     import psycopg
+    from psycopg.conninfo import make_conninfo
 
     dados = Path(os.getenv("DATA_DIR", DIRETORIO))
     fontes = []
@@ -142,9 +143,15 @@ def main():
             assinatura = hashlib.file_digest(arquivo, "sha256").hexdigest()
         fontes.append((fonte, caminho, assinatura))
 
-    with psycopg.connect(host=os.getenv("DB_HOST", "localhost"), port=os.getenv("DB_PORT", "5432"),
-                         dbname=os.getenv("DB_NAME", "spi"), user=os.getenv("DB_USER", "spi"),
-                         password=os.getenv("DB_PASSWORD", "spi")) as conn, conn.cursor() as cur:
+    db_string = os.getenv("DATABASE_URL") or make_conninfo(
+        host=os.getenv("DB_HOST", "localhost"),
+        port=os.getenv("DB_PORT", "5432"),
+        dbname=os.getenv("DB_NAME", "spi"),
+        user=os.getenv("DB_USER", "spi"),
+        password=os.getenv("DB_PASSWORD", "spi"),
+    )
+
+    with psycopg.connect(db_string) as conn, conn.cursor() as cur:
         # Uma transação para esquema, dados, catálogo e marcadores, mesmo com
         # dois deploys simultâneos. Uma falha reverte a carga completa.
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('spi.importar_servidores'))")
